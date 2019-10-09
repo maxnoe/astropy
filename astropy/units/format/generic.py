@@ -466,9 +466,22 @@ class Generic(Base):
         else:
             raise ValueError()
 
-    _translations = str.maketrans(
-        {'\N{GREEK SMALL LETTER MU}': '\N{MICRO SIGN}',
-         '\N{MINUS SIGN}': '-'})
+    _translations = str.maketrans({
+        '\N{GREEK SMALL LETTER MU}': '\N{MICRO SIGN}',
+        '\N{MINUS SIGN}': '-',
+        '\N{SUPERSCRIPT MINUS}': '-',
+        '\N{SUPERSCRIPT PLUS SIGN}': '+',
+        '\N{SUPERSCRIPT ZERO}': '0',
+        '\N{SUPERSCRIPT ONE}': '1',
+        '\N{SUPERSCRIPT TWO}': '2',
+        '\N{SUPERSCRIPT THREE}': '3',
+        '\N{SUPERSCRIPT FOUR}': '4',
+        '\N{SUPERSCRIPT FIVE}': '5',
+        '\N{SUPERSCRIPT SIX}': '6',
+        '\N{SUPERSCRIPT SEVEN}': '7',
+        '\N{SUPERSCRIPT EIGHT}': '8',
+        '\N{SUPERSCRIPT NINE}': '9',
+    })
     """Character translations that should be applied before parsing a string.
 
     Note that this does explicitly *not* generally translate MICRO SIGN to u,
