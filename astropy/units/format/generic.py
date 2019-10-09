@@ -148,7 +148,9 @@ class Generic(Base):
             return t
 
         def t_UNIT(t):
-            r"%|([YZEPTGMkhdcmunpfazy]?'((?!\d)\w)+')|((?!\d)\w)+"
+            "%|([YZEPTGMkhdcmu\N{MICRO SIGN}npfazy]?"+r"'((?!\d)\w)+')|((?!\d)\w)+"
+            if t.value[0] == '\N{MICRO SIGN}':
+                t.value = 'u' + t.value[1:]
             t.value = cls._get_unit(t)
             return t
 
@@ -464,10 +466,23 @@ class Generic(Base):
         else:
             raise ValueError()
 
+    _translations = str.maketrans(
+        {'\N{GREEK SMALL LETTER MU}': '\N{MICRO SIGN}',
+         '\N{MINUS SIGN}': '-'})
+    """Character translations that should be applied before parsing a string.
+
+    Note that this does explicitly *not* generally translate MICRO SIGN to u,
+    since then a string like 'µ' would be interpreted as unit mass.
+    """
+
     @classmethod
     def parse(cls, s, debug=False):
         if not isinstance(s, str):
             s = s.decode('ascii')
+
+        # Translate some basic unicode items that we'd like to support on
+        # input but are not standard.
+        s = s.translate(cls._translations)
 
         result = cls._do_parse(s, debug=debug)
         # Check for excess solidi, but exclude fractional exponents (accepted)
