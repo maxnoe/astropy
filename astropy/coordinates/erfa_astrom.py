@@ -18,6 +18,7 @@ from .builtin_frames.utils import (
 )
 
 from ..utils.exceptions import AstropyWarning
+from ..table import Table
 
 __all__ = []
 
@@ -98,7 +99,160 @@ class ErfaAstrom:
         )
 
 
-class ErfaAstromInterpolator(ErfaAstrom):
+class ErfaAstromTableInterpolator(ErfaAstrom):
+    '''
+    A provider for astrometry values that does not call erfa
+    for each individual timestamp but interpolates linearly
+    between support points from a prefilled table.
+
+    For the interpolation, float64 MJD values are used, so time precision
+    for the interpolation will be around a microsecond.
+
+    This can dramatically speed up coordinate transformations,
+    e.g. between CIRS and ICRS.
+
+    The precision of the transformation will still be in the order of microseconds
+    for reasonable values of time_resolution, e.g. ``300 * u.s``.
+
+    Users should benchmark performance and accuracy with the default transformation
+    for their specific use case and then choose a suitable ``time_resolution``
+    from there.
+
+    This class is intended be used together with the ``erfa_astrom`` science state,
+    e.g. in a context manager like this
+
+    Example
+    -------
+    >>> from astropy.coordinates import SkyCoord, CIRS
+    >>> import astropy.units as u
+    >>> from astropy.time import Time
+    >>> import numpy as np
+    '''
+
+    def __init__(self):
+        self._table = None
+
+    @classmethod
+    def for_support(cls, support):
+        '''Create a new ErfaAstromTableInterpolator for given support obstimes
+
+        Arguments
+        ---------
+        '''
+        instance = cls()
+        instance.fill(support)
+        return instance
+
+    @classmethod
+    def from_table(cls, table):
+        instance = cls()
+        instance._table = table
+        return instance
+
+    def fill(self, support):
+        data = {'mjd': support.tt.mjd}
+        jd1_tt, jd2_tt = get_jd12(support, 'tt')
+
+        # CIP
+        data['cip_x'], data['cip_y'], data['cip_z'] = get_cip(jd1_tt, jd2_tt)
+
+        earth_pv, earth_heliocentric = prepare_earth_position_vel(support)
+        for i, dim in enumerate('xyz'):
+            for key in 'pv':
+                data[f'earth_{key}_{dim}'] = earth_pv[key][:, i]
+
+            data[f'earth_heliocentric_{dim}'] = earth_heliocentric[:, i]
+
+        self._table = Table(data)
+
+    def _check(self):
+        if self._table is None:
+            raise ValueError(
+                'No values have yet been stored in the table of this interpolator'
+                ', you need to call ``ErfaAstromTableInterpolator.fill``'
+                ' or create the instance from an existing table.'
+            )
+
+    def _prepare_earth_position_vel(self, obstime):
+        self._check()
+        # do interpolation
+        earth_pv = np.empty(obstime.shape, dtype=erfa.dt_pv)
+        earth_heliocentric = np.empty(obstime.shape + (3,))
+
+        # convert to tt to make sure it's in the same scale as the support
+        mjd = obstime.tt.mjd
+        support_mjd = self._table['mjd']
+
+        for dim, dim_key in enumerate('xyz'):
+            for key in 'pv':
+                earth_pv[key][..., dim] = np.interp(
+                    mjd,
+                    support_mjd,
+                    self._table[f'earth_{key}_{dim_key}'],
+                )
+            earth_heliocentric[..., dim] = np.interp(
+                mjd, support_mjd, self._table[f'earth_heliocentric_{dim_key}']
+            )
+
+        return earth_pv, earth_heliocentric
+
+    def _get_cip(self, obstime):
+        self._check()
+        # convert to tt to make sure it's in the same scale as the support
+        mjd = obstime.tt.mjd
+
+        return tuple(
+            np.interp(mjd, self._table['mjd'], self._table[f'cip_{dim}'])
+            for dim in 'xyz'
+        )
+
+    def apci(self, frame_or_coord):
+        '''
+        Wrapper for ``erfa.apci``, used in conversions CIRS <-> ICRS
+
+        Arguments
+        ---------
+        frame_or_coord: ``astropy.coordinates.BaseCoordinateFrame`` or ``astropy.coordinates.SkyCoord``
+            Frame or coordinate instance in the corresponding frame
+            for which to calculate the calculate the astrom values.
+            For this function, a CIRS frame is expected.
+        '''
+        self._check()
+        obstime = frame_or_coord.obstime
+
+        cip = self._get_cip(obstime)
+        earth_pv, earth_heliocentric = self._prepare_earth_position_vel(obstime)
+
+        jd1_tt, jd2_tt = get_jd12(obstime, 'tt')
+        astrom = erfa.apci(jd1_tt, jd2_tt, earth_pv, earth_heliocentric, *cip)
+        return astrom
+
+    def apcs(self, frame_or_coord):
+        self._check()
+        '''
+        Wrapper for ``erfa.apci``, used in conversions GCRS <-> ICRS
+
+        Arguments
+        ---------
+        frame_or_coord: ``astropy.coordinates.BaseCoordinateFrame`` or ``astropy.coordinates.SkyCoord``
+            Frame or coordinate instance in the corresponding frame
+            for which to calculate the calculate the astrom values.
+            For this function, a GCRS frame is expected.
+        '''
+        obstime = frame_or_coord.obstime
+
+        # get the position and velocity arrays for the observatory.  Need to
+        # have xyz in last dimension, and pos/vel in one-but-last.
+        earth_pv, earth_heliocentric = self._prepare_earth_position_vel(obstime)
+        pv = pav2pv(
+            frame_or_coord.obsgeoloc.get_xyz(xyz_axis=-1).value,
+            frame_or_coord.obsgeovel.get_xyz(xyz_axis=-1).value
+        )
+        jd1_tt, jd2_tt = get_jd12(obstime, 'tt')
+        return erfa.apcs(jd1_tt, jd2_tt, pv, earth_pv, earth_heliocentric)
+
+
+class ErfaAstromInterpolator(ErfaAstromTableInterpolator):
     '''
     A provider for astrometry values that does not call erfa
     for each individual timestamp but interpolates linearly
@@ -171,35 +325,6 @@ class ErfaAstromInterpolator(ErfaAstrom):
             scale=obstime.scale,
         )
 
-    @staticmethod
-    def _prepare_earth_position_vel(support, obstime):
-        pv_support, heliocentric_support = prepare_earth_position_vel(support)
-
-        # do interpolation
-        earth_pv = np.empty(obstime.shape, dtype=erfa.dt_pv)
-        earth_heliocentric = np.empty(obstime.shape + (3,))
-        for dim in range(3):
-            for key in 'pv':
-                earth_pv[key][..., dim] = np.interp(
-                    obstime.mjd,
-                    support.mjd,
-                    pv_support[key][..., dim]
-                )
-            earth_heliocentric[..., dim] = np.interp(
-                obstime.mjd, support.mjd, heliocentric_support[..., dim]
-            )
-
-        return earth_pv, earth_heliocentric
-
-    @staticmethod
-    def _get_cip(support, obstime):
-        jd1_tt_support, jd2_tt_support = get_jd12(support, 'tt')
-        cip_support = get_cip(jd1_tt_support, jd2_tt_support)
-        return tuple(
-            np.interp(obstime.mjd, support.mjd, cip_component)
-            for cip_component in cip_support
-        )
-
     def apci(self, frame_or_coord):
         '''
         Wrapper for ``erfa.apci``, used in conversions CIRS <-> ICRS
@@ -212,18 +337,15 @@ class ErfaAstromInterpolator(ErfaAstrom):
             For this function, a CIRS frame is expected.
         '''
         obstime = frame_or_coord.obstime
-        # no point in interpolating for a single value
+
+        # For this, we don't want to interpolate single obstimes
         if obstime.size == 1:
-            return super().apci(frame_or_coord)
+            return ErfaAstrom.apci(frame_or_coord)
 
         support = self._get_support_points(obstime)
+        self.fill(support)
 
-        jd1_tt, jd2_tt = get_jd12(obstime, 'tt')
-        cip = self._get_cip(support, obstime)
-        earth_pv, earth_heliocentric = self._prepare_earth_position_vel(support, obstime)
-
-        astrom = erfa.apci(jd1_tt, jd2_tt, earth_pv, earth_heliocentric, *cip)
-        return astrom
+        return super().apci(frame_or_coord)
 
     def apcs(self, frame_or_coord):
         '''
@@ -237,21 +359,15 @@ class ErfaAstromInterpolator(ErfaAstrom):
             For this function, a GCRS frame is expected.
         '''
         obstime = frame_or_coord.obstime
-        # no point in interpolating for a single value
+
+        # For this, we don't want to interpolate single obstimes
         if obstime.size == 1:
             return super().apci(frame_or_coord)
 
         support = self._get_support_points(obstime)
+        self.fill(support)
 
-        jd1_tt, jd2_tt = get_jd12(obstime, 'tt')
-        # get the position and velocity arrays for the observatory.  Need to
-        # have xyz in last dimension, and pos/vel in one-but-last.
-        earth_pv, earth_heliocentric = self._prepare_earth_position_vel(support, obstime)
-        pv = pav2pv(
-            frame_or_coord.obsgeoloc.get_xyz(xyz_axis=-1).value,
-            frame_or_coord.obsgeovel.get_xyz(xyz_axis=-1).value
-        )
-        return erfa.apcs(jd1_tt, jd2_tt, pv, earth_pv, earth_heliocentric)
+        return super().apcs(frame_or_coord)
 
 
 class erfa_astrom(ScienceState):
