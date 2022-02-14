@@ -1400,7 +1400,7 @@ class SkyCoord(MaskableShapedLikeNDArray):
             searcharoundcoords, self, distlimit, storekdtree="_kdtree_3d"
         )
 
-    def skyoffset_frame(self, rotation=None):
+    def skyoffset_frame(self, rotation=None, *, polar=False):
         """
         Returns the sky offset frame with this SkyCoord at the origin.
 
@@ -1410,7 +1410,13 @@ class SkyCoord(MaskableShapedLikeNDArray):
             The final rotation of the frame about the ``origin``. The sign of
             the rotation is the left-hand rule. That is, an object at a
             particular position angle in the un-rotated system will be sent to
-            the positive latitude (z) direction in the final frame.
+            the positive latitude (z) direction in the final frame. For polar
+            frames, a positive rotation increases ``phi`` by the same angle.
+        polar : bool, optional
+            If `True`, put this coordinate at the north pole of the offset
+            frame and use polar components ``phi``, ``theta``, and ``r``.
+            The angle ``phi`` increases from positive offset longitude towards
+            positive offset latitude. The default is `False`.
 
         Returns
         -------
@@ -1419,7 +1425,7 @@ class SkyCoord(MaskableShapedLikeNDArray):
             this object has an ICRS coordinate, the resulting frame is
             SkyOffsetICRS, with the origin set to this object)
         """
-        return SkyOffsetFrame(origin=self, rotation=rotation)
+        return SkyOffsetFrame(origin=self, rotation=rotation, polar=polar)
 
     def get_constellation(self, short_name=False, constellation_list="iau"):
         """

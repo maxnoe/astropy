@@ -15,6 +15,7 @@ from astropy.coordinates.builtin_frames import (
     SkyOffsetFrame,
 )
 from astropy.coordinates.distances import Distance
+from astropy.coordinates.representation import PhysicsSphericalRepresentation
 from astropy.tests.helper import assert_quantity_allclose as assert_allclose
 from astropy.time import Time
 
@@ -376,3 +377,152 @@ def test_skyoffset_wrapping_vs_broadcasting():
     origin = HCRS(0 * u.deg, 0 * u.deg, obstime=time)
     frame = SkyOffsetFrame(origin=origin)
     SkyCoord(240 * u.deg, 0 * u.deg, frame=frame)
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        SkyCoord(70 * u.deg, 20 * u.deg),
+        SkyCoord(-120 * u.deg, -60 * u.deg, frame="galactic"),
+        SkyCoord(az=170 * u.deg, alt=40 * u.deg, frame="altaz"),
+    ],
+)
+@pytest.mark.parametrize("rotation", [0, 45, -90, 180] * u.deg)
+@pytest.mark.parametrize("separation", [0.001, 5, 120] * u.deg)
+def test_skyoffset_frame_polar(origin, rotation, separation):
+    position_angle = np.arange(0, 360, 45) * u.deg
+    targets = origin.directional_offset_by(position_angle, separation)
+    frame = origin.skyoffset_frame(rotation=rotation, polar=True)
+    polar = targets.transform_to(frame)
+
+    assert frame.default_representation is PhysicsSphericalRepresentation
+    assert_allclose(polar.theta, separation, atol=1e-12 * u.deg)
+    expected_phi = 90 * u.deg - position_angle + rotation
+    assert_allclose(
+        Angle(polar.phi - expected_phi).wrap_at(180 * u.deg),
+        0 * u.deg,
+        atol=1e-8 * u.deg,
+    )
+    assert_allclose(
+        polar.transform_to(origin.frame).separation(targets),
+        0 * u.deg,
+        atol=1e-12 * u.deg,
+    )
+
+    # The corresponding ordinary frame has the same orientation. This exact
+    # spherical formula approaches atan2(lat, lon) for small offsets.
+    ordinary_frame = origin.skyoffset_frame(rotation=rotation)
+    ordinary = targets.transform_to(ordinary_frame)
+    expected_phi = np.arctan2(
+        np.sin(ordinary.lat), np.cos(ordinary.lat) * np.sin(ordinary.lon)
+    )
+    assert_allclose(
+        Angle(polar.phi - expected_phi).wrap_at(180 * u.deg),
+        0 * u.deg,
+        atol=1e-8 * u.deg,
+    )
+    assert_allclose(
+        ordinary.transform_to(frame).separation(polar),
+        0 * u.deg,
+        atol=1e-12 * u.deg,
+    )
+    assert_allclose(
+        polar.transform_to(ordinary_frame).separation(ordinary),
+        0 * u.deg,
+        atol=1e-12 * u.deg,
+    )
+
+    # Only theta is defined at the pole; do not assert anything about phi.
+    assert_allclose(origin.transform_to(frame).theta, 0 * u.deg, atol=1e-12 * u.deg)
+
+
+def test_skyoffset_polar_classes():
+    origin = ICRS_45_45
+    ordinary = SkyOffsetFrame(origin=origin)
+    polar = SkyOffsetFrame(origin=origin, polar=True)
+    assert type(polar) is type(SkyOffsetFrame(origin=origin, polar=True))
+    assert type(ordinary) is type(SkyOffsetFrame(origin=origin, polar=False))
+    assert type(polar) is not type(ordinary)
+    assert type(polar).__name__ == "SkyOffsetPolarICRS"
+    assert type(ordinary).__name__ == "SkyOffsetICRS"
+
+
+def test_skyoffset_polar_components():
+    origin = ICRS_45_45
+    polar = SkyOffsetFrame(
+        phi=30 * u.deg, theta=5 * u.deg, r=1, origin=origin, polar=True
+    )
+    expected = origin.directional_offset_by(60 * u.deg, 5 * u.deg)
+    assert_allclose(
+        polar.transform_to(origin.frame).separation(expected),
+        0 * u.deg,
+        atol=1e-12 * u.deg,
+    )
+
+
+@pytest.mark.parametrize("polar", [False, True])
+def test_skyoffset_polar_broadcasting(polar):
+    origin = SkyCoord([70, 120] * u.deg, [20, -40] * u.deg)
+    targets = origin.directional_offset_by(30 * u.deg, 5 * u.deg)
+    transformed = targets.transform_to(origin.skyoffset_frame(polar=polar))
+    assert transformed.shape == (2,)
+    assert_allclose(
+        transformed.transform_to(origin.frame).separation(targets),
+        0 * u.deg,
+        atol=1e-12 * u.deg,
+    )
+    if polar:
+        assert_allclose(transformed.phi, 60 * u.deg, atol=1e-12 * u.deg)
+        assert_allclose(transformed.theta, 5 * u.deg, atol=1e-12 * u.deg)
+        assert_allclose(transformed[0].phi, 60 * u.deg, atol=1e-12 * u.deg)
+
+
+def test_skyoffset_polar_different_origins():
+    source = SkyCoord(71 * u.deg, 21 * u.deg)
+    frame1 = ICRS_45_45.skyoffset_frame(polar=True)
+    frame2 = SkyCoord(70 * u.deg, 20 * u.deg).skyoffset_frame(
+        polar=True, rotation=35 * u.deg
+    )
+    direct = source.transform_to(frame2)
+    indirect = source.transform_to(frame1).transform_to(frame2)
+    assert_allclose(indirect.theta, direct.theta, atol=1e-12 * u.deg)
+    assert_allclose(indirect.phi, direct.phi, atol=1e-12 * u.deg)
+
+
+def test_skyoffset_polar_distance_and_velocity():
+    source = ICRS(
+        ra=71 * u.deg,
+        dec=21 * u.deg,
+        distance=3 * u.kpc,
+        pm_ra_cosdec=2 * u.mas / u.yr,
+        pm_dec=-3 * u.mas / u.yr,
+        radial_velocity=20 * u.km / u.s,
+    )
+    frame = ICRS_45_45.skyoffset_frame(polar=True, rotation=35 * u.deg)
+    transformed = source.transform_to(frame)
+    assert_allclose(transformed.r, source.distance)
+    recovered = transformed.transform_to(ICRS())
+    assert_allclose(recovered.separation(source), 0 * u.deg, atol=1e-12 * u.deg)
+    assert_allclose(recovered.distance, source.distance)
+    assert_allclose(recovered.pm_ra_cosdec, source.pm_ra_cosdec)
+    assert_allclose(recovered.pm_dec, source.pm_dec)
+    assert_allclose(recovered.radial_velocity, source.radial_velocity)
+
+
+@pytest.mark.parametrize("polar", [False, True])
+def test_skyoffset_replicate_polar(polar):
+    frame = ICRS_45_45.skyoffset_frame(polar=polar)
+    assert "polar" not in frame.frame_attributes
+    replicated = frame.replicate_without_data(rotation=35 * u.deg)
+    assert type(replicated) is type(frame)
+    assert replicated.default_representation is frame.default_representation
+    assert replicated.origin == frame.origin
+    assert replicated.rotation == 35 * u.deg
+    source = ICRS_45_45.directional_offset_by(30 * u.deg, 5 * u.deg)
+    expected = source.transform_to(
+        ICRS_45_45.skyoffset_frame(polar=polar, rotation=35 * u.deg)
+    )
+    actual = source.transform_to(replicated)
+    assert_allclose(actual.cartesian.xyz, expected.cartesian.xyz)
+    with pytest.raises(ValueError, match="polar convention is fixed"):
+        frame.replicate_without_data(polar=not polar)

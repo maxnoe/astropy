@@ -77,6 +77,15 @@ class _CustomICRS(coord.ICRS):
             0 * u.pc,
             origin=_CustomICRS(2 * u.deg, 3 * u.deg, 1 * u.pc),
         ),
+        coord.SkyOffsetFrame(origin=coord.ICRS(70 * u.deg, 20 * u.deg), polar=True),
+        coord.SkyOffsetFrame(
+            phi=30 * u.deg,
+            theta=1 * u.deg,
+            r=3 * u.kpc,
+            origin=coord.Galactic(70 * u.deg, 20 * u.deg),
+            rotation=35 * u.deg,
+            polar=True,
+        ),
     ],
 )
 def test_skyoffset_pickle(pickle_protocol, frame):  # noqa: F811
@@ -85,3 +94,22 @@ def test_skyoffset_pickle(pickle_protocol, frame):  # noqa: F811
     https://github.com/astropy/astropy/issues/9249
     """
     check_pickling_recovery(frame, pickle_protocol)
+
+
+def test_skyoffset_polar_array_pickle(pickle_protocol):  # noqa: F811
+    frame = coord.SkyOffsetFrame(
+        phi=[30, 60] * u.deg,
+        theta=[1, 2] * u.deg,
+        r=3 * u.kpc,
+        origin=coord.Galactic(70 * u.deg, 20 * u.deg),
+        rotation=35 * u.deg,
+        polar=True,
+    )
+    recovered = pickle.loads(pickle.dumps(frame, protocol=pickle_protocol))
+    assert type(recovered) is type(frame)
+    assert recovered.default_representation is coord.PhysicsSphericalRepresentation
+    assert recovered.rotation == frame.rotation
+    assert recovered.origin == frame.origin
+    np.testing.assert_array_equal(recovered.phi, frame.phi)
+    np.testing.assert_array_equal(recovered.theta, frame.theta)
+    np.testing.assert_array_equal(recovered.r, frame.r)

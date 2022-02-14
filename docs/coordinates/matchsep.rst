@@ -202,6 +202,57 @@ frame aligned with standard ICRA RA/Dec, but on M31::
     on-sky rotation. This may change in the future, however.
 
 
+Polar sky offsets
+^^^^^^^^^^^^^^^^^
+
+Pass ``polar=True`` to put the reference position at the north pole instead of
+on the equator. This keyword selects a distinct frame class rather than
+setting a frame attribute. To change conventions, create the other frame and
+use ``transform_to``. The default representation is then
+`~astropy.coordinates.PhysicsSphericalRepresentation`, with components ``phi``,
+``theta``, and ``r``. The angle ``theta`` is the angular separation from the
+reference position; ``r`` retains the target's distance, when available::
+
+    >>> import numpy as np
+    >>> center = SkyCoord(70*u.deg, 20*u.deg)
+    >>> polar_frame = center.skyoffset_frame(polar=True)
+    >>> east = center.directional_offset_by(90*u.deg, 5*u.deg)
+    >>> north = center.directional_offset_by(0*u.deg, 5*u.deg)
+    >>> east_polar = east.transform_to(polar_frame)
+    >>> north_polar = north.transform_to(polar_frame)
+    >>> np.allclose(east_polar.theta.to_value(u.deg), 5)
+    True
+    >>> np.allclose(east_polar.phi.to_value(u.deg), 0)
+    True
+    >>> np.allclose(north_polar.phi.to_value(u.deg), 90)
+    True
+
+To construct polar coordinates directly, supply all three components. Use a
+dimensionless ``r=1`` if no distance is known::
+
+    >>> polar = SkyCoord(phi=30*u.deg, theta=5*u.deg, r=1, frame=polar_frame)
+    >>> np.allclose(center.separation(polar).to_value(u.deg), 5)
+    True
+
+The angle ``phi`` increases from positive offset longitude towards positive
+offset latitude in the corresponding ordinary sky offset frame with the same
+``rotation``. This preserves a right-handed Cartesian system. In terms of
+ordinary offset longitude and latitude, the exact spherical relation is::
+
+    phi = arctan2(sin(lat), cos(lat) * sin(lon))
+
+For small offsets this approaches ``arctan2(lat, lon)``. With zero rotation,
+``phi = 90 deg - position_angle``, modulo 360 degrees, where the position angle
+is measured in the original reference frame. A positive ``rotation`` increases
+``phi`` by the same angle. Both polar and ordinary offset frames use the same
+orientation, and can be transformed into one another with ``transform_to``.
+
+At the reference position and its antipode, ``phi`` is undefined. Do not use
+``position_angle`` measured from the transformed reference position at the pole
+to determine ``phi``: that bearing depends on an arbitrary meridian. Measure
+position angles in the original reference frame instead.
+
+
 .. _astropy-coordinates-matching:
 
 Matching Catalogs

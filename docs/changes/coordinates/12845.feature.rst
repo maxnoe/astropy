@@ -1,0 +1,4 @@
+Added polar sky offset frames via ``SkyOffsetFrame(..., polar=True)`` and
+``SkyCoord.skyoffset_frame(polar=True)``. The angular separation is ``theta``
+and ``phi`` increases from positive offset longitude towards positive offset
+latitude, preserving a right-handed coordinate system.
