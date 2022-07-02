@@ -1471,7 +1471,7 @@ class UnitBase:
         from . import cgs
         return self.to_system(cgs)[0]
 
-    @property
+    @lazyproperty
     def physical_type(self):
         """
         Physical type(s) dimensionally compatible with the unit.
