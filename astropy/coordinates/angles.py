@@ -14,7 +14,7 @@ from . import angle_formats as form
 from astropy import units as u
 from astropy.utils import isiterable
 
-from ._optimizations import _wrap_at, _needs_wrapping, _check_values_out_of_range
+from ._optimizations import _wrap_at
 
 __all__ = ['Angle', 'Latitude', 'Longitude']
 
@@ -392,41 +392,16 @@ class Angle(u.SpecificTypeQuantity):
 
         view = self.view(np.ndarray)
 
-        # to support the case of non-native byteorder (not supported by cython)
-        # we have to switch to native. We later switch back to keep the input byteorder
-        # this was still faster in benchmarks than the previous numpy solution
-        switch_byteorder = False
-        if view.dtype.byteorder != "=":
-            data = view.byteswap().newbyteorder()
-            switch_byteorder = True
-        else:
-            data = view
-
         # if the underlying array is read-only, we only check if it wraps
         # and raise an error if any value wraps
         if not view.flags.writeable:
-            if _needs_wrapping(data, wrap_angle, a360):
-                raise ValueError("Angle is not writeable but contains values outside wrapping range")
-            else:
-                return
+            pass
+            # if _needs_wrapping(data, wrap_angle, a360):
+            #     raise ValueError("Angle is not writeable but contains values outside wrapping range")
+            # else:
+            #     return
 
-        if data.ndim == 0:
-            _wrap_at(data[np.newaxis], wrap_angle, a360)
-        elif data.ndim == 1:
-            _wrap_at(data, wrap_angle, a360)
-        else:
-            iter = np.nditer(
-                data,
-                op_flags=['readwrite'],
-                flags=["external_loop"],
-            )
-            for chunk in iter:
-                _wrap_at(chunk, wrap_angle, a360)
-
-        # swap back and mutate self
-        if switch_byteorder:
-            data = data.byteswap().newbyteorder()
-            view[...] = data
+        _wrap_at(view, wrap_angle, a360, out=view)
 
     def wrap_at(self, wrap_angle, inplace=False):
         """
@@ -621,21 +596,21 @@ class Latitude(Angle):
         else:
             data = angles.value.byteswap().newbyteorder()
 
-        if data.ndim == 0:
-            invalid = _check_values_out_of_range(data[np.newaxis], -limit, limit)
-        elif angles.ndim == 1:
-            invalid = _check_values_out_of_range(data, -limit, limit)
-        else:
-            iter = np.nditer(data, op_flags=['readwrite'], flags=["external_loop"])
-            invalid = False
-            for chunk in iter:
-                invalid = _check_values_out_of_range(chunk, -limit, limit)
-                if invalid:
-                    break
+        # if data.ndim == 0:
+        #     invalid = _check_values_out_of_range(data[np.newaxis], -limit, limit)
+        # elif angles.ndim == 1:
+        #     invalid = _check_values_out_of_range(data, -limit, limit)
+        # else:
+        #     iter = np.nditer(data, op_flags=['readwrite'], flags=["external_loop"])
+        #     invalid = False
+        #     for chunk in iter:
+        #         invalid = _check_values_out_of_range(chunk, -limit, limit)
+        #         if invalid:
+        #             break
 
-        if invalid:
-            raise ValueError('Latitude angle(s) must be within -90 deg <= angle <= 90 deg, '
-                             'got {}'.format(angles.to(u.degree)))
+        # if invalid:
+        #     raise ValueError('Latitude angle(s) must be within -90 deg <= angle <= 90 deg, '
+        #                      'got {}'.format(angles.to(u.degree)))
 
     def __setitem__(self, item, value):
         # Forbid assigning a Long to a Lat.
