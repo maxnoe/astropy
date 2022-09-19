@@ -388,18 +388,20 @@ class Angle(u.SpecificTypeQuantity):
         # this Angle, then do all the math on raw Numpy arrays rather
         # than Quantity objects for speed.
         a360 = u.degree.to(self.unit, 360.0)
-        wrap_angle = wrap_angle.to_value(self.unit).astype(self.dtype)
+        if self.dtype.kind == 'i':
+            a360 = int(a360)
 
+        wrap_angle = wrap_angle.to_value(self.unit).astype(self.dtype)
         view = self.view(np.ndarray)
 
         # if the underlying array is read-only, we only check if it wraps
         # and raise an error if any value wraps
         if not view.flags.writeable:
-            pass
-            # if _needs_wrapping(data, wrap_angle, a360):
-            #     raise ValueError("Angle is not writeable but contains values outside wrapping range")
-            # else:
-            #     return
+            wrap_angle_floor = wrap_angle - a360
+            valid = np.isfinite(view)
+            if np.any(view[valid] < wrap_angle_floor) or np.any(view[valid] >= wrap_angle):
+                raise ValueError("Angle is not writeable but contains values outside wrapping range")
+            return
 
         _wrap_at(view, wrap_angle, a360, out=view)
 

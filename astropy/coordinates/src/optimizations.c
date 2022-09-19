@@ -3,6 +3,7 @@
 #include "numpy/ndarraytypes.h"
 #include "numpy/ufuncobject.h"
 #include <math.h>
+#include <stdbool.h>
 
 /*
  * numpy ufuncs used in the coordinates module for performance
@@ -219,6 +220,8 @@ static char wrap_at_types[] = {
     NPY_DOUBLE, NPY_DOUBLE, NPY_DOUBLE, NPY_DOUBLE
 };
 
+
+
 static void* data[] = {NULL, NULL, NULL, NULL};
 
 static struct PyModuleDef moduledef = {
@@ -235,7 +238,7 @@ static struct PyModuleDef moduledef = {
 
 PyMODINIT_FUNC PyInit__optimizations(void)
 {
-    PyObject *m, *wrap_at, *d;
+    PyObject *m, *wrap_at, *needs_wrapping, *d;
     m = PyModule_Create(&moduledef);
     if (!m) {
         return NULL;
